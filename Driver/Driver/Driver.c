@@ -8,6 +8,7 @@
 
 #define SHARED_MEM_SIZE 1024
 
+extern POBJECT_TYPE* MmSectionObjectType;
 PVOID gSharedMemory = NULL;
 HANDLE gSectionHandle = NULL;
 HANDLE gWriteEvent = NULL;
@@ -47,9 +48,7 @@ VOID CommunicationThread(PVOID Context)
             // 공유 메모리에서 데이터를 읽고 처리 (예: 로그 출력 등)
             char buf[SHARED_MEM_SIZE];
             SIZE_T returnSize = 0;
-            char* copy_test_buf = "Hello";
-            // status = MmCopyVirtualMemory(PsGetCurrentProcess(), gSharedMemory, PsGetCurrentProcess(), buf, SHARED_MEM_SIZE, KernelMode, &returnSize);
-            status = MmCopyVirtualMemory(PsGetCurrentProcess(), copy_test_buf, PsGetCurrentProcess(), buf, 6, KernelMode, &returnSize);
+            status = MmCopyVirtualMemory(PsGetCurrentProcess(), gSharedMemory, PsGetCurrentProcess(), buf, SHARED_MEM_SIZE, KernelMode, &returnSize);
 			if (!NT_SUCCESS(status)) {
 				WriteLogToFile("[%s] Failed to copy shared memory. status=0x%x.\r\n", __func__, status);
             }
@@ -113,24 +112,33 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
         }
         WriteLogToFile("[%s] Created shared memory. status=0x%X, Handle=%p\r\n", __func__, status, gSectionHandle);
 
-        // 맵핑
-        SIZE_T viewSize = SHARED_MEM_SIZE;
-        status = ZwMapViewOfSection(gSectionHandle,
-            NtCurrentProcess(),
-            &gSharedMemory,
-            0,
-            SHARED_MEM_SIZE,
-            NULL,
-            &viewSize,
-            ViewUnmap,
-            0,
-            PAGE_READWRITE);
+        // ObReferenceObjectByHandle를 통해 섹션 객체의 포인터를 얻음
+        PVOID pSectionObject = NULL;
+        status = ObReferenceObjectByHandle(gSectionHandle,
+            SECTION_ALL_ACCESS,
+            *MmSectionObjectType,
+            KernelMode,
+            &pSectionObject,
+            NULL);
         if (!NT_SUCCESS(status)) {
             ZwClose(gSectionHandle);
-            WriteLogToFile("[%s] Failed ZwMapViewOfSection. status=0x%X\r\n", __func__, status);
+            WriteLogToFile("[%s] Failed ObReferenceObjectByHandle for gSectionHandle. status=0x%X\r\n", __func__, status);
             return status;
         }
-        WriteLogToFile("[%s] Mapped shared memory. ptr=%p\r\n", __func__, gSharedMemory);
+
+        // 맵핑: pSectionObject를 첫번째 인자로 사용
+        SIZE_T viewSize = SHARED_MEM_SIZE;
+        status = MmMapViewInSystemSpace(pSectionObject,
+            &gSharedMemory,
+            &viewSize);
+        ObDereferenceObject(pSectionObject);
+        if (!NT_SUCCESS(status)) {
+            ZwClose(gSectionHandle);
+            WriteLogToFile("[%s] Failed MmMapViewInSystemSpace while mapping shared memory. status=0x%X\r\n", __func__, status);
+            return status;
+        }
+        WriteLogToFile("[%s] Mapped shared memory. ptr=%p, viewSize=%llu\r\n", __func__, gSharedMemory, viewSize);
+
 
         // 2. 이벤트 생성 (이름: "\\BaseNamedObjects\\EventWriteToDriver", "\\BaseNamedObjects\\EventReadFromDriver")
         UNICODE_STRING writeEventName = RTL_CONSTANT_STRING(L"\\BaseNamedObjects\\EventWriteToDriver");
@@ -151,6 +159,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
             return status;
         }
         WriteLogToFile("[%s] Created EventReadFromDriver. Handle=%p\r\n", __func__, gReadEvent);
+
 
         // 3. 통신 스레드 생성
         HANDLE threadHandle;
