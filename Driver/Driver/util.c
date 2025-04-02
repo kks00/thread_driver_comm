@@ -1,5 +1,24 @@
 #include "util.h"
 
+char* _strcat(char* dest, const char* src) {
+	char* ptr = dest;
+
+	// dest 문자열의 끝을 찾음
+	while (*ptr) {
+		ptr++;
+	}
+
+	// src의 문자열을 dest의 끝에 복사
+	while (*src) {
+		*ptr++ = *src++;
+	}
+
+	// NULL 종료 문자 추가
+	*ptr = '\0';
+
+	return dest;
+}
+
 BOOL ProbeUserAddress(PVOID addr, SIZE_T size, ULONG alignment) {
 	if (size == 0) {
 		return TRUE;

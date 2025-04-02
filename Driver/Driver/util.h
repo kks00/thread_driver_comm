@@ -7,6 +7,8 @@
 
 #define LENGTH(a) (sizeof(a) / sizeof(a[0]))
 
+char* _strcat(char* dest, const char* src);
+
 BOOL ProbeUserAddress(PVOID addr, SIZE_T size, ULONG alignment);
 BOOL SafeCopy(PVOID dest, PVOID src, SIZE_T size);
 PCHAR LowerStr(PCHAR str);

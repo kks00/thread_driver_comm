@@ -54,8 +54,8 @@ VOID CommunicationThread(PVOID Context)
             }
             else {
                 WriteLogToFile("[%s] Message From Client: %s\r\n", __func__, buf);
+                _strcat(gSharedMemory, " - Processed by Driver");
             }
-            
 
             // 유저모드에 처리 완료를 알림 (gReadEventObj 사용)
             PKEVENT readEventObj = NULL;
@@ -82,9 +82,45 @@ VOID CommunicationThread(PVOID Context)
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
+VOID DriverUnload(PDRIVER_OBJECT DriverObject)
+{
+    UNREFERENCED_PARAMETER(DriverObject);
+    WriteLogToFile("[%s] Unloading driver.\r\n", __func__);
+
+    if (gSharedMemory) {
+        MmUnmapViewInSystemSpace(gSharedMemory);
+        gSharedMemory = NULL;
+        WriteLogToFile("[%s] Unmapped shared memory.\r\n", __func__);
+    }
+
+    if (gSectionHandle) {
+        ZwClose(gSectionHandle);
+        gSectionHandle = NULL;
+        WriteLogToFile("[%s] Closed section handle.\r\n", __func__);
+    }
+
+    if (gWriteEvent) {
+        ZwClose(gWriteEvent);
+        gWriteEvent = NULL;
+        WriteLogToFile("[%s] Closed write event handle.\r\n", __func__);
+    }
+
+    if (gReadEvent) {
+        ZwClose(gReadEvent);
+        gReadEvent = NULL;
+        WriteLogToFile("[%s] Closed read event handle.\r\n", __func__);
+    }
+
+    WriteLogToFile("[%s] Driver unloaded successfully.\r\n", __func__);
+}
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
     UNREFERENCED_PARAMETER(driver);
     UNREFERENCED_PARAMETER(registryPath);
+
+    if (driver) {
+        driver->DriverUnload = DriverUnload;
+    }
 
     WriteLogToFile("[%s] Driver Loaded.\r\n", __func__);
     WriteLogToFile("[%s] Driver Object: %p, Registry Path: %wZ\r\n", __func__, driver, registryPath);
