@@ -17,7 +17,7 @@ HANDLE gReadEvent = NULL;
 VOID CommunicationThread(PVOID Context)
 {
     UNREFERENCED_PARAMETER(Context);
-    WriteLogToFile("[%s] Thread Started.\r\n", __func__);
+    WriteLog("[%s] Thread Started.\r\n", __func__);
 
     NTSTATUS status;
     __try {
@@ -30,17 +30,17 @@ VOID CommunicationThread(PVOID Context)
                 (PVOID*)&writeEventObj,
                 NULL);
             if (!NT_SUCCESS(status)) {
-                WriteLogToFile("[%s] Failed to reference gWriteEvent. status=0x%X\r\n", __func__, status);
+                WriteLog("[%s] Failed to reference gWriteEvent. status=0x%X\r\n", __func__, status);
                 break;
             }
 
             status = KeWaitForSingleObject(writeEventObj, Executive, KernelMode, FALSE, NULL);
             if (!NT_SUCCESS(status)) {
-                WriteLogToFile("[%s] Failed KeWaitForSingleObject while waiting gWriteEventObj.\r\n", __func__);
+                WriteLog("[%s] Failed KeWaitForSingleObject while waiting gWriteEventObj.\r\n", __func__);
                 break;
             }
             KeResetEvent(writeEventObj);
-            WriteLogToFile("[%s] gWriteEvent triggered.\r\n", __func__);
+            WriteLog("[%s] gWriteEvent triggered.\r\n", __func__);
 
             ObDereferenceObject(writeEventObj);
 
@@ -49,11 +49,11 @@ VOID CommunicationThread(PVOID Context)
             char buf[SHARED_MEM_SIZE];
             SIZE_T returnSize = 0;
             status = MmCopyVirtualMemory(PsGetCurrentProcess(), gSharedMemory, PsGetCurrentProcess(), buf, SHARED_MEM_SIZE, KernelMode, &returnSize);
-			if (!NT_SUCCESS(status)) {
-				WriteLogToFile("[%s] Failed to copy shared memory. status=0x%x.\r\n", __func__, status);
+            if (!NT_SUCCESS(status)) {
+                WriteLog("[%s] Failed to copy shared memory. status=0x%x.\r\n", __func__, status);
             }
             else {
-                WriteLogToFile("[%s] Message From Client: %s\r\n", __func__, buf);
+                WriteLog("[%s] Message From Client: %s\r\n", __func__, buf);
                 _strcat(gSharedMemory, " - Processed by Driver");
             }
 
@@ -66,7 +66,7 @@ VOID CommunicationThread(PVOID Context)
                 (PVOID*)&readEventObj,
                 NULL);
             if (!NT_SUCCESS(status)) {
-                WriteLogToFile("[%s] Failed to reference gReadEvent. status=0x%X\r\n", __func__, status);
+                WriteLog("[%s] Failed to reference gReadEvent. status=0x%X\r\n", __func__, status);
                 break;
             }
 
@@ -76,7 +76,7 @@ VOID CommunicationThread(PVOID Context)
         }
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        WriteLogToFile("[%s] Exception occurred in CommunicationThread.\r\n", __func__);
+        WriteLog("[%s] Exception occurred in CommunicationThread.\r\n", __func__);
     }
 
     PsTerminateSystemThread(STATUS_SUCCESS);
@@ -85,33 +85,33 @@ VOID CommunicationThread(PVOID Context)
 VOID DriverUnload(PDRIVER_OBJECT DriverObject)
 {
     UNREFERENCED_PARAMETER(DriverObject);
-    WriteLogToFile("[%s] Unloading driver.\r\n", __func__);
+    WriteLog("[%s] Unloading driver.\r\n", __func__);
 
     if (gSharedMemory) {
         MmUnmapViewInSystemSpace(gSharedMemory);
         gSharedMemory = NULL;
-        WriteLogToFile("[%s] Unmapped shared memory.\r\n", __func__);
+        WriteLog("[%s] Unmapped shared memory.\r\n", __func__);
     }
 
     if (gSectionHandle) {
         ZwClose(gSectionHandle);
         gSectionHandle = NULL;
-        WriteLogToFile("[%s] Closed section handle.\r\n", __func__);
+        WriteLog("[%s] Closed section handle.\r\n", __func__);
     }
 
     if (gWriteEvent) {
         ZwClose(gWriteEvent);
         gWriteEvent = NULL;
-        WriteLogToFile("[%s] Closed write event handle.\r\n", __func__);
+        WriteLog("[%s] Closed write event handle.\r\n", __func__);
     }
 
     if (gReadEvent) {
         ZwClose(gReadEvent);
         gReadEvent = NULL;
-        WriteLogToFile("[%s] Closed read event handle.\r\n", __func__);
+        WriteLog("[%s] Closed read event handle.\r\n", __func__);
     }
 
-    WriteLogToFile("[%s] Driver unloaded successfully.\r\n", __func__);
+    WriteLog("[%s] Driver unloaded successfully.\r\n", __func__);
 }
 
 NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
@@ -122,8 +122,8 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
         driver->DriverUnload = DriverUnload;
     }
 
-    WriteLogToFile("[%s] Driver Loaded.\r\n", __func__);
-    WriteLogToFile("[%s] Driver Object: %p, Registry Path: %wZ\r\n", __func__, driver, registryPath);
+    WriteLog("[%s] Driver Loaded.\r\n", __func__);
+    WriteLog("[%s] Driver Object: %p, Registry Path: %wZ\r\n", __func__, driver, registryPath);
 
     __try {
         NTSTATUS status;
@@ -143,10 +143,10 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
             SEC_COMMIT,
             NULL);
         if (!NT_SUCCESS(status)) {
-            WriteLogToFile("[%s] Failed ZwCreateSection. status=0x%X\r\n", __func__, status);
+            WriteLog("[%s] Failed ZwCreateSection. status=0x%X\r\n", __func__, status);
             return status;
         }
-        WriteLogToFile("[%s] Created shared memory. status=0x%X, Handle=%p\r\n", __func__, status, gSectionHandle);
+        WriteLog("[%s] Created shared memory. status=0x%X, Handle=%p\r\n", __func__, status, gSectionHandle);
 
         // ObReferenceObjectByHandle를 통해 섹션 객체의 포인터를 얻음
         PVOID pSectionObject = NULL;
@@ -158,7 +158,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
             NULL);
         if (!NT_SUCCESS(status)) {
             ZwClose(gSectionHandle);
-            WriteLogToFile("[%s] Failed ObReferenceObjectByHandle for gSectionHandle. status=0x%X\r\n", __func__, status);
+            WriteLog("[%s] Failed ObReferenceObjectByHandle for gSectionHandle. status=0x%X\r\n", __func__, status);
             return status;
         }
 
@@ -170,10 +170,10 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
         ObDereferenceObject(pSectionObject);
         if (!NT_SUCCESS(status)) {
             ZwClose(gSectionHandle);
-            WriteLogToFile("[%s] Failed MmMapViewInSystemSpace while mapping shared memory. status=0x%X\r\n", __func__, status);
+            WriteLog("[%s] Failed MmMapViewInSystemSpace while mapping shared memory. status=0x%X\r\n", __func__, status);
             return status;
         }
-        WriteLogToFile("[%s] Mapped shared memory. ptr=%p, viewSize=%llu\r\n", __func__, gSharedMemory, viewSize);
+        WriteLog("[%s] Mapped shared memory. ptr=%p, viewSize=%llu\r\n", __func__, gSharedMemory, viewSize);
 
 
         // 2. 이벤트 생성 (이름: "\\BaseNamedObjects\\EventWriteToDriver", "\\BaseNamedObjects\\EventReadFromDriver")
@@ -183,34 +183,34 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
         InitializeObjectAttributes(&objAttrs, &writeEventName, OBJ_KERNEL_HANDLE | OBJ_OPENIF, NULL, NULL);
         status = ZwCreateEvent(&gWriteEvent, EVENT_ALL_ACCESS, &objAttrs, NotificationEvent, FALSE);
         if (!NT_SUCCESS(status)) {
-            WriteLogToFile("[%s] Failed ZwCreateEvent for gWriteEvent. status=0x%X\r\n", __func__, status);
+            WriteLog("[%s] Failed ZwCreateEvent for gWriteEvent. status=0x%X\r\n", __func__, status);
             return status;
         }
-        WriteLogToFile("[%s] Created EventWriteToDriver. Handle=%p\r\n", __func__, gWriteEvent);
+        WriteLog("[%s] Created EventWriteToDriver. Handle=%p\r\n", __func__, gWriteEvent);
 
         InitializeObjectAttributes(&objAttrs, &readEventName, OBJ_KERNEL_HANDLE | OBJ_OPENIF, NULL, NULL);
         status = ZwCreateEvent(&gReadEvent, EVENT_ALL_ACCESS, &objAttrs, NotificationEvent, FALSE);
         if (!NT_SUCCESS(status)) {
-            WriteLogToFile("[%s] Failed ZwCreateEvent for gReadEvent. status=0x%X\r\n", __func__, status);
+            WriteLog("[%s] Failed ZwCreateEvent for gReadEvent. status=0x%X\r\n", __func__, status);
             return status;
         }
-        WriteLogToFile("[%s] Created EventReadFromDriver. Handle=%p\r\n", __func__, gReadEvent);
+        WriteLog("[%s] Created EventReadFromDriver. Handle=%p\r\n", __func__, gReadEvent);
 
 
         // 3. 통신 스레드 생성
         HANDLE threadHandle;
-        status = PsCreateSystemThread(&threadHandle, THREAD_ALL_ACCESS, NULL, 
-                                      NULL, NULL, CommunicationThread, NULL);
+        status = PsCreateSystemThread(&threadHandle, THREAD_ALL_ACCESS, NULL,
+            NULL, NULL, CommunicationThread, NULL);
         if (!NT_SUCCESS(status)) {
-            WriteLogToFile("[%s] Failed PsCreateSystemThread. status=0x%X\r\n", __func__, status);
+            WriteLog("[%s] Failed PsCreateSystemThread. status=0x%X\r\n", __func__, status);
             return status;
         }
         ZwClose(threadHandle);
 
-        WriteLogToFile("[%s] Driver loaded successfully.\r\n", __func__);
+        WriteLog("[%s] Driver loaded successfully.\r\n", __func__);
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        WriteLogToFile("[%s] Exception while initializing driver.\r\n", __func__);
+        WriteLog("[%s] Exception while initializing driver.\r\n", __func__);
     }
 
     return STATUS_SUCCESS;

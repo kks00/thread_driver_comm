@@ -1,6 +1,6 @@
 #include "Logs.h"
 
-void WriteLogToFile(const char* Format, ...) {
+void WriteLog(const char* Format, ...) {
     UNICODE_STRING FilePath;
     OBJECT_ATTRIBUTES ObjectAttributes;
     IO_STATUS_BLOCK IoStatusBlock;
@@ -37,6 +37,11 @@ void WriteLogToFile(const char* Format, ...) {
         return; // 문자열 포맷 실패 시 종료
     }
 
+#ifndef LOG_TO_FILE
+    DbgPrintEx(0, 0, Buffer);
+#endif
+
+#ifdef LOG_TO_FILE
     // 파일 경로 설정
     RtlInitUnicodeString(&FilePath, LOG_FILE_PATH);
     InitializeObjectAttributes(&ObjectAttributes, &FilePath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
@@ -71,8 +76,7 @@ void WriteLogToFile(const char* Format, ...) {
     // 로그를 파일에 즉시 쓰기
     Status = ZwWriteFile(FileHandle, NULL, NULL, NULL, &IoStatusBlock, Buffer, (ULONG)BytesToWrite, NULL, NULL);
 
-    // 동기식 I/O 플래그 사용으로 즉시 디스크 반영됨
-
     // 파일 닫기
     ZwClose(FileHandle);
+#endif
 }
