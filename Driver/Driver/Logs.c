@@ -1,5 +1,6 @@
 #include "Logs.h"
 
+#ifdef DEBUG_MODE
 void WriteLog(const char* Format, ...) {
     UNICODE_STRING FilePath;
     OBJECT_ATTRIBUTES ObjectAttributes;
@@ -80,3 +81,4 @@ void WriteLog(const char* Format, ...) {
     ZwClose(FileHandle);
 #endif
 }
+#endif

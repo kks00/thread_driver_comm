@@ -13,6 +13,8 @@ PVOID gSharedMemory = NULL;
 HANDLE gSectionHandle = NULL;
 HANDLE gWriteEvent = NULL;
 HANDLE gReadEvent = NULL;
+HANDLE gThreadHandle = NULL;
+BOOLEAN gShutdownThread = FALSE; // 스레드 종료 신호 추가
 
 VOID CommunicationThread(PVOID Context)
 {
@@ -21,7 +23,8 @@ VOID CommunicationThread(PVOID Context)
 
     NTSTATUS status;
     __try {
-        for (;;) {
+        // gShutdownThread 체크 추가
+        while (!gShutdownThread) {
             PKEVENT writeEventObj = NULL;
             status = ObReferenceObjectByHandle(gWriteEvent,
                 EVENT_MODIFY_STATE,
@@ -34,18 +37,26 @@ VOID CommunicationThread(PVOID Context)
                 break;
             }
 
-            status = KeWaitForSingleObject(writeEventObj, Executive, KernelMode, FALSE, NULL);
-            if (!NT_SUCCESS(status)) {
-                WriteLog("[%s] Failed KeWaitForSingleObject while waiting gWriteEventObj.\r\n", __func__);
+            // 타임아웃을 추가하여 주기적으로 종료 신호 체크
+            LARGE_INTEGER timeout;
+            timeout.QuadPart = -10000000LL; // 1초 타임아웃 (100ns 단위)
+            
+            status = KeWaitForSingleObject(writeEventObj, Executive, KernelMode, FALSE, &timeout);
+            
+            if (status == STATUS_TIMEOUT) {
+                ObDereferenceObject(writeEventObj);
+                continue; // 타임아웃시 루프 계속, 종료 신호 체크
+            }
+            
+            if (!NT_SUCCESS(status) || gShutdownThread) {
+                WriteLog("[%s] Thread termination requested or wait failed.\r\n", __func__);
+                ObDereferenceObject(writeEventObj);
                 break;
             }
-            KeResetEvent(writeEventObj);
+
             WriteLog("[%s] gWriteEvent triggered.\r\n", __func__);
 
-            ObDereferenceObject(writeEventObj);
-
-
-            // 공유 메모리에서 데이터를 읽고 처리 (예: 로그 출력 등)
+            // 공유 메모리 작업
             char buf[SHARED_MEM_SIZE];
             SIZE_T returnSize = 0;
             status = MmCopyVirtualMemory(PsGetCurrentProcess(), gSharedMemory, PsGetCurrentProcess(), buf, SHARED_MEM_SIZE, KernelMode, &returnSize);
@@ -54,10 +65,28 @@ VOID CommunicationThread(PVOID Context)
             }
             else {
                 WriteLog("[%s] Message From Client: %s\r\n", __func__, buf);
-                _strcat(gSharedMemory, " - Processed by Driver");
+
+                _strcat(buf, " - Processed by Driver");
+
+                // 수정된 buf를 공유 메모리에 다시 복사
+                SIZE_T writeSize = 0;
+                status = MmCopyVirtualMemory(PsGetCurrentProcess(), buf, PsGetCurrentProcess(), gSharedMemory, SHARED_MEM_SIZE, KernelMode, &writeSize);
+                if (!NT_SUCCESS(status)) {
+                    WriteLog("[%s] Failed to write back to shared memory. status=0x%x.\r\n", __func__, status);
+                }
+                else {
+                    WriteLog("[%s] Successfully wrote back to shared memory. writeSize=%llu\r\n", __func__, writeSize);
+                }
             }
 
-            // 유저모드에 처리 완료를 알림 (gReadEventObj 사용)
+            ObDereferenceObject(writeEventObj);
+
+            // 종료 신호 재확인
+            if (gShutdownThread) {
+                break;
+            }
+
+            // 유저모드에 처리 완료를 알림
             PKEVENT readEventObj = NULL;
             status = ObReferenceObjectByHandle(gReadEvent,
                 EVENT_MODIFY_STATE,
@@ -71,7 +100,6 @@ VOID CommunicationThread(PVOID Context)
             }
 
             KeSetEvent(readEventObj, IO_NO_INCREMENT, FALSE);
-
             ObDereferenceObject(readEventObj);
         }
     }
@@ -79,6 +107,7 @@ VOID CommunicationThread(PVOID Context)
         WriteLog("[%s] Exception occurred in CommunicationThread.\r\n", __func__);
     }
 
+    WriteLog("[%s] Communication thread exiting.\r\n", __func__);
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
@@ -86,6 +115,54 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject)
 {
     UNREFERENCED_PARAMETER(DriverObject);
     WriteLog("[%s] Unloading driver.\r\n", __func__);
+
+    // 스레드 종료 처리
+    if (gThreadHandle) {
+        // 종료 신호 설정
+        gShutdownThread = TRUE;
+        
+        PKTHREAD threadObject = NULL;
+        NTSTATUS status = ObReferenceObjectByHandle(gThreadHandle,
+            THREAD_ALL_ACCESS,
+            *PsThreadType,
+            KernelMode,
+            (PVOID*)&threadObject,
+            NULL);
+        
+        if (NT_SUCCESS(status)) {
+            // writeEvent를 신호 상태로 만들어 대기 중인 스레드를 깨움
+            if (gWriteEvent) {
+                PKEVENT writeEventObj = NULL;
+                NTSTATUS eventStatus = ObReferenceObjectByHandle(gWriteEvent,
+                    EVENT_MODIFY_STATE,
+                    *ExEventObjectType,
+                    KernelMode,
+                    (PVOID*)&writeEventObj,
+                    NULL);
+                if (NT_SUCCESS(eventStatus)) {
+                    KeSetEvent(writeEventObj, IO_NO_INCREMENT, FALSE);
+                    ObDereferenceObject(writeEventObj);
+                }
+            }
+            
+            // 스레드가 종료될 때까지 대기 (타임아웃 추가)
+            LARGE_INTEGER timeout;
+            timeout.QuadPart = -50000000LL; // 5초 타임아웃
+            
+            status = KeWaitForSingleObject(threadObject, Executive, KernelMode, FALSE, &timeout);
+            if (status == STATUS_TIMEOUT) {
+                WriteLog("[%s] Thread termination timeout.\r\n", __func__);
+            } else {
+                WriteLog("[%s] Communication thread terminated.\r\n", __func__);
+            }
+            
+            ObDereferenceObject(threadObject);
+        }
+        
+        ZwClose(gThreadHandle);
+        gThreadHandle = NULL;
+        WriteLog("[%s] Closed thread handle.\r\n", __func__);
+    }
 
     if (gSharedMemory) {
         MmUnmapViewInSystemSpace(gSharedMemory);
@@ -181,7 +258,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
         UNICODE_STRING readEventName = RTL_CONSTANT_STRING(L"\\BaseNamedObjects\\EventReadFromDriver");
 
         InitializeObjectAttributes(&objAttrs, &writeEventName, OBJ_KERNEL_HANDLE | OBJ_OPENIF, NULL, NULL);
-        status = ZwCreateEvent(&gWriteEvent, EVENT_ALL_ACCESS, &objAttrs, NotificationEvent, FALSE);
+        status = ZwCreateEvent(&gWriteEvent, EVENT_ALL_ACCESS, &objAttrs, SynchronizationEvent, FALSE);
         if (!NT_SUCCESS(status)) {
             WriteLog("[%s] Failed ZwCreateEvent for gWriteEvent. status=0x%X\r\n", __func__, status);
             return status;
@@ -189,7 +266,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
         WriteLog("[%s] Created EventWriteToDriver. Handle=%p\r\n", __func__, gWriteEvent);
 
         InitializeObjectAttributes(&objAttrs, &readEventName, OBJ_KERNEL_HANDLE | OBJ_OPENIF, NULL, NULL);
-        status = ZwCreateEvent(&gReadEvent, EVENT_ALL_ACCESS, &objAttrs, NotificationEvent, FALSE);
+        status = ZwCreateEvent(&gReadEvent, EVENT_ALL_ACCESS, &objAttrs, SynchronizationEvent, FALSE);
         if (!NT_SUCCESS(status)) {
             WriteLog("[%s] Failed ZwCreateEvent for gReadEvent. status=0x%X\r\n", __func__, status);
             return status;
@@ -198,14 +275,12 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
 
 
         // 3. 통신 스레드 생성
-        HANDLE threadHandle;
-        status = PsCreateSystemThread(&threadHandle, THREAD_ALL_ACCESS, NULL,
+        status = PsCreateSystemThread(&gThreadHandle, THREAD_ALL_ACCESS, NULL,
             NULL, NULL, CommunicationThread, NULL);
         if (!NT_SUCCESS(status)) {
             WriteLog("[%s] Failed PsCreateSystemThread. status=0x%X\r\n", __func__, status);
             return status;
         }
-        ZwClose(threadHandle);
 
         WriteLog("[%s] Driver loaded successfully.\r\n", __func__);
     }
